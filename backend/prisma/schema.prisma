@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model OTP {
+  id        String   @id @default(uuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String?  @unique
+  phone         String?  @unique
+  password      String?
+  googleId      String?  @unique
+  name          String?
+  avatar        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastLogin     DateTime?
+  role          String   @default("user")
+  provider      String   @default("local")
+  businessName  String?
+  businessType  String?
+  isActive      Boolean  @default(true)
+  sessionVersion Int     @default(0)
+  
+  testimonials Testimonial[]
+  downloads    DownloadEvent[]
+}
+
+model Testimonial {
+  id          String   @id @default(uuid())
+  userId      String
+  feedback    String
+  rating      Int
+  name        String?
+  role        String?
+  company     String?
+  date        String?
+  time        String?
+  profileImage String? // URL or base64
+  imageHash    String?
+  isExported   Boolean  @default(false)
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model DownloadEvent {
+  id            String   @id @default(uuid())
+  userId        String
+  name          String
+  format        String
+  date          String
+  time          String
+  testimonialId String?
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+}
