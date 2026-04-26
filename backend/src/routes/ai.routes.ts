@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import axios from 'axios';
 
 const router = Router();
 
@@ -86,64 +87,144 @@ router.post('/extract', async (req: Request, res: Response): Promise<any> => {
       { "feedback": string, "name": string, "role": string, "company": string, "date": string, "time": string, "rating": number, "tone": string, "isSupported": boolean }
     `;
 
-    // Using gemini-flash-latest as it is the supported stable model for this API key
+    const groqKey = process.env.GROQ_API_KEY;
+    
+    if (groqKey) {
+      try {
+        console.log(`[Groq] Attempting extraction for image (${mimeType})...`);
+        const groqResponse = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+          model: "llama-3.2-90b-vision-preview",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt + "\nIMPORTANT: Return ONLY valid JSON. No other text." },
+                { type: "image_url", image_url: { url: `data:${mimeType || 'image/png'};base64,${base64Data}` } }
+              ]
+            }
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.1
+        }, {
+          headers: { 
+            'Authorization': `Bearer ${groqKey}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 45000 // 45s timeout for complex 90B processing
+        });
+
+        if (groqResponse.data?.choices?.[0]?.message?.content) {
+          console.log('[Groq] Extraction successful!');
+          const content = groqResponse.data.choices[0].message.content;
+          return res.json(JSON.parse(content));
+        } else {
+          throw new Error('Groq returned empty response');
+        }
+      } catch (err: any) {
+        console.error('[Groq] Error:', err.response?.data || err.message);
+        console.warn('[Groq] Falling back to Gemini...');
+      }
+    }
+
+    // Fallback to Gemini
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${key}`;
     
     let attempt = 0;
-    const maxRetries = 3;
+    const maxRetries = 5; 
     let lastError = null;
 
     while (attempt < maxRetries) {
       try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              role: "user",
-              parts: [
-                { text: prompt },
-                { inline_data: { mime_type: mimeType || "image/png", data: base64Data } }
-              ]
-            }]
-          })
+        const response = await axios.post(url, {
+          contents: [{
+            role: "user",
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: mimeType || "image/png", data: base64Data } }
+            ]
+          }]
+        }, {
+          headers: { 'Content-Type': 'application/json' }
         });
 
-        const data: any = await response.json();
-        
-        if (response.ok) {
-          const text = data.candidates[0].content.parts[0].text;
+        if (response.data) {
+          const text = response.data.candidates[0].content.parts[0].text;
           const jsonMatch = text.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             return res.json(JSON.parse(jsonMatch[0]));
           } else {
             throw new Error('Failed to parse AI response');
           }
-        } else if (response.status === 503 || response.status === 429) {
-          // Retry on 503 Service Unavailable or 429 Too Many Requests
-          console.warn(`Gemini API overloaded (Status ${response.status}). Retrying... attempt ${attempt + 1}`);
-          lastError = data.error?.message || 'Gemini API Error';
-        } else {
-          // Unrecoverable error (e.g., 400 Bad Request, 401 Unauthorized)
-          return res.status(response.status).json({ error: data.error?.message || 'Gemini API Error' });
         }
       } catch (err: any) {
-        lastError = err.message || 'Network error';
+        const status = err.response?.status;
+        if (status === 503 || status === 429) {
+          console.warn(`Gemini API overloaded (Status ${status}). Retrying... attempt ${attempt + 1}`);
+          lastError = err.response?.data?.error?.message || err.message;
+        } else {
+          return res.status(status || 500).json({ error: err.response?.data?.error?.message || err.message });
+        }
       }
 
       attempt++;
       if (attempt < maxRetries) {
-        // Exponential backoff: 1.5s, 3s
         await new Promise(resolve => setTimeout(resolve, attempt * 1500));
       }
     }
 
-    // If we've exhausted all retries
-    console.error('Gemini API exhausted retries. Last error:', lastError);
-    return res.status(503).json({ error: 'AI Service is currently experiencing extremely high demand. Please try again in a few moments.' });
+    console.error('All extraction attempts failed. Last error:', lastError);
+    return res.status(503).json({ error: 'AI Services are currently overloaded. Please try again in a moment.' });
   } catch (error) {
     console.error('Gemini Extraction Error:', error);
     res.status(500).json({ error: 'Failed to process image with AI' });
+  }
+});
+
+router.post('/enhance', async (req: Request, res: Response): Promise<any> => {
+  const { feedback, tone } = req.body;
+  const key = process.env.GROQ_API_KEY;
+
+  if (!key) {
+    return res.status(500).json({ error: 'Groq API Key not configured on server' });
+  }
+
+  try {
+    const prompt = `
+      You are an expert copywriter. Rewrite the following customer testimonial to match the requested tone.
+      Maintain the original sentiment and key facts, but adjust the wording.
+      
+      TONE: ${tone}
+      TESTIMONIAL: "${feedback}"
+      
+      Requirements for each tone:
+      - Original: Keep it exactly as is (no change).
+      - Professional: Use sophisticated, business-appropriate language.
+      - Concise: Make it short and punchy, ideal for quick reading.
+      - Expanded: Add descriptive detail and elaborate on the positive sentiment without inventing new facts.
+      
+      Return ONLY the rewritten testimonial text. No quotes, no preamble.
+    `;
+
+    const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+      max_tokens: 1024
+    }, {
+      headers: { 
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response.data?.choices?.[0]?.message?.content) {
+      res.json({ feedback: response.data.choices[0].message.content.trim() });
+    } else {
+      res.status(500).json({ error: 'AI failed to generate enhanced text' });
+    }
+  } catch (error: any) {
+    console.error('Enhancement Error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to enhance testimonial' });
   }
 });
 

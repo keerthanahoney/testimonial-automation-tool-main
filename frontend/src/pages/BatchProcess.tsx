@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { Upload, Download, ArrowLeft, Image as ImageIcon, X, Sparkles, FileText, Code } from 'lucide-react';
-import { extractFeedbackFromImage } from '../lib/gemini';
+import { Upload, Download, ArrowLeft, Image as ImageIcon, X, Sparkles, FileText, Code, Star, Settings, LogOut, Check, Loader2, AlertCircle } from 'lucide-react';
+import { extractFeedbackFromImage, enhanceTestimonial } from '../lib/gemini';
 import { templateMap } from '../components/TestimonialTemplates';
 import type { TestimonialData, TemplateName } from '../types/testimonial';
 import { useTestimonialStore } from '../store/testimonialStore';
@@ -16,7 +16,7 @@ import { useEffect } from 'react';
 export const BatchProcess: React.FC = () => {
   const { user } = useAuthStore();
   const navigate = useNavigate();
-  const { addToHistory, addToDownloadHistory, checkDuplicateHash } = useTestimonialStore();
+  const { addToHistory, addToDownloadHistory, checkDuplicateHash, history } = useTestimonialStore();
 
   const generateHash = (str: string) => {
     let hash = 0;
@@ -30,29 +30,53 @@ export const BatchProcess: React.FC = () => {
 
   useEffect(() => {
     if (user && (!user.businessName || !user.businessType)) {
-      const isOriginalAccount = user.email === 'thavishisahithiiiii@gmail.com';
-      const hasHistory = localStorage.getItem(`testimonial_history_${user.id}`) || (isOriginalAccount && localStorage.getItem('testimonial_history'));
-      
-      if (!hasHistory) {
+      // If the user already has testimonials in the store, they are an existing user — never redirect them
+      const hasTestimonialsInStore = history && history.length > 0;
+      const hasHistoryInStorage =
+        localStorage.getItem(`testimonial_history_${user.id}`) ||
+        localStorage.getItem('testimonial_history');
+
+      const isExistingUser = hasTestimonialsInStore || !!hasHistoryInStorage;
+
+      if (!isExistingUser) {
         toast.error("Please complete your business details to start batch processing!");
         navigate('/settings', { replace: true, state: { missingInfo: true } });
       }
     }
-  }, [user, navigate]);
+  }, [user, navigate, history]);
 
   const [step, setStep] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressMsg, setProgressMsg] = useState('');
-  const [batchData, setBatchData] = useState<{ id: string; image: string; data: TestimonialData }[]>([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState(0);
+  const [currentFileProgress, setCurrentFileProgress] = useState(0);
+  const [batchData, setBatchData] = useState<{ id: string; image: string; originalFeedback?: string; data: TestimonialData }[]>([]);
   const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
   
   const [globalTemplate, setGlobalTemplate] = useState<TemplateName>('minimal');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isTemplateOpen, setIsTemplateOpen] = useState(false);
   const [customization, setCustomization] = useState({
-    fontFamily: "'Inter', sans-serif",
-    fontSize: 16,
+    fontFamily: 'Inter, sans-serif',
     customBackgroundColor: '',
     customTextColor: '',
   });
+
+  const templateOptions = [
+    { id: 'minimal', label: 'Minimal', colorHex: '#f8fafc' },
+    { id: 'instagram', label: 'Instagram', colorHex: '#f472b6' },
+    { id: 'whatsapp', label: 'WhatsApp', colorHex: '#34d399' },
+    { id: 'dark-premium', label: 'Dark Premium', colorHex: '#0f172a' },
+    { id: 'linkedin', label: 'LinkedIn', colorHex: '#3b82f6' },
+    { id: 'glassmorphism', label: 'Glassmorphism', colorHex: '#bae6fd' },
+    { id: 'geometric', label: 'Geometric', colorHex: '#d8b4fe' },
+    { id: 'happy-bubble', label: 'Happy Bubble', colorHex: '#fde047' },
+    { id: 'deep-burgundy', label: 'Deep Burgundy', colorHex: '#991b1b' },
+    { id: 'classic-parchment', label: 'Classic Parchment', colorHex: '#fed7aa' },
+    { id: 'corporate-grid', label: 'Corporate Grid', colorHex: '#94a3b8' },
+    { id: 'azure-bubble', label: 'Azure Bubble', colorHex: '#7dd3fc' },
+  ];
 
   const cardRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
@@ -67,42 +91,82 @@ export const BatchProcess: React.FC = () => {
   };
 
   const executeBatchExtraction = async () => {
-    if (queuedFiles.length === 0) {
-       toast.error("Please upload images first!");
+    if (queuedFiles.length < 2) {
+       toast.error("Batch processing requires at least 2 images!");
        return;
     }
     
     setIsProcessing(true);
     setStep(1);
+    setCurrentFileIndex(0);
+    setCurrentFileProgress(0);
     
-    const results = [];
+    const batchResults: { id: string; image: string; data: TestimonialData }[] = [];
     
     for (let i = 0; i < queuedFiles.length; i++) {
        const file = queuedFiles[i];
+       setCurrentFileIndex(i);
+       setCurrentFileProgress(0);
        setProgressMsg(`AI is analyzing image ${i + 1} of ${queuedFiles.length}...`);
+       
+       const progressInterval = setInterval(() => {
+         setCurrentFileProgress(prev => {
+           if (prev < 90) return prev + Math.floor(Math.random() * 8) + 2;
+           if (prev < 98) return prev + 1;
+           return prev;
+         });
+       }, 500);
        
        try {
          const base64 = await new Promise<string>((resolve) => {
             const reader = new FileReader();
-            reader.onload = (e) => resolve(e.target?.result as string);
+            reader.onload = (e) => {
+               const img = new Image();
+               img.onload = () => {
+                  const canvas = document.createElement('canvas');
+                  const MAX_WIDTH = 1000;
+                  const MAX_HEIGHT = 1000;
+                  let width = img.width;
+                  let height = img.height;
+
+                  if (width > height) {
+                     if (width > MAX_WIDTH) {
+                        height *= MAX_WIDTH / width;
+                        width = MAX_WIDTH;
+                     }
+                  } else {
+                     if (height > MAX_HEIGHT) {
+                        width *= MAX_HEIGHT / height;
+                        height = MAX_HEIGHT;
+                     }
+                  }
+                  canvas.width = width;
+                  canvas.height = height;
+                  const ctx = canvas.getContext('2d');
+                  ctx?.drawImage(img, 0, 0, width, height);
+                  resolve(canvas.toDataURL('image/jpeg', 0.8));
+               };
+               img.src = e.target?.result as string;
+            };
             reader.readAsDataURL(file);
          });
 
          const hash = generateHash(base64);
-         if (checkDuplicateHash(hash)) {
-            toast.info(`Image ${i + 1} skipped - already processed!`);
-            continue;
-         }
 
          const result = await extractFeedbackFromImage(base64, file.type || "image/png");
+         clearInterval(progressInterval);
+         setCurrentFileProgress(100);
+
          const itemId = `testimonial_batch_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
          
-         results.push({
+         const newItem = {
            id: itemId,
            image: base64,
+           originalFeedback: result.feedback,
+           fileName: file.name, // Store filename for matching in progress UI
            data: {
              feedback: result.feedback || 'No text extracted',
-             time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+             time: result.time || new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
              date: result.date || new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
              name: result.name || `Customer ${i + 1}`,
              role: result.role || '',
@@ -116,29 +180,70 @@ export const BatchProcess: React.FC = () => {
              tag: 'testimonial',
              id: itemId,
              imageHash: hash,
-             ...customization
+             template: globalTemplate,
+             fontFamily: customization.fontFamily,
+             customBackgroundColor: customization.customBackgroundColor,
+             customTextColor: customization.customTextColor,
            } as TestimonialData
-         });
-       } catch (err) {
-         console.error("Batch Gemini extraction failed", err);
+         };
+         
+         batchResults.push(newItem);
+         setBatchData([...batchResults]); // Trigger UI update immediately
+       } catch (err: any) {
+         clearInterval(progressInterval);
+         console.error("Batch extraction failed", err);
+         toast.error(`Image ${i + 1} failed: ${err.message || 'Unknown error'}`);
        }
+
+       await new Promise(resolve => setTimeout(resolve, 400));
     }
     
-    setBatchData(results);
+    setBatchData(batchResults);
     setIsProcessing(false);
+
+    if (batchResults.length > 0) {
+      setSelectedIds(new Set(batchResults.map(r => r.id))); 
+      setSelectedId(batchResults[0].id); // Select first item so editor isn't blank
+      setStep(1); // Move to editor step
+    } else {
+      toast.error("No data could be extracted from these images.");
+      setStep(0);
+    }
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const updateAllData = (partialCustom: any) => {
-     setCustomization(prev => ({ ...prev, ...partialCustom }));
+  const updateGlobalStyle = (partial: Partial<TestimonialData>) => {
+     setBatchData(prev => prev.map(item => 
+        selectedIds.has(item.id) ? { ...item, data: { ...item.data, ...partial } } : item
+     ));
+     if (partial.template) setGlobalTemplate(partial.template as TemplateName);
   };
 
   const handleDataEdit = (id: string, partial: Partial<TestimonialData>) => {
-     setBatchData(prev => prev.map(item => item.id === id ? { ...item, data: { ...item.data, ...partial } } : item));
+      setBatchData(prev => prev.map(item => item.id === id ? { ...item, data: { ...item.data, ...partial } } : item));
+  };
+
+  const handleToneSwitch = async (id: string, tone: string) => {
+    const item = batchData.find(i => i.id === id);
+    if (!item) return;
+
+    if (tone === 'original') {
+      handleDataEdit(id, { feedback: item.originalFeedback || item.data.feedback, tone: 'original' as any });
+      return;
+    }
+
+    const toastId = toast.loading(`Transforming to ${tone} tone...`);
+    try {
+      const enhancedText = await enhanceTestimonial(item.originalFeedback || item.data.feedback, tone);
+      handleDataEdit(id, { feedback: enhancedText, tone: tone as any });
+      toast.success(`Updated to ${tone} tone!`, { id: toastId });
+    } catch (err) {
+      toast.error("Failed to enhance text", { id: toastId });
+    }
   };
 
   const getMergedData = (localData: TestimonialData) => {
-     return { ...localData, ...customization };
+      return { ...localData, ...customization };
   };
 
   const validateItem = (data: TestimonialData, index?: number) => {
@@ -181,6 +286,24 @@ export const BatchProcess: React.FC = () => {
     saveAs(content, "testimonials_batch.zip");
     addToDownloadHistory(`Batch (${batchData.length} items)`, "ZIP");
     toast.success("Batch export complete!");
+  };
+
+  const handleExitWithAutoSave = () => {
+    if (batchData.length === 0) {
+       navigate('/dashboard');
+       return;
+    }
+
+    batchData.forEach(item => {
+       const finalData = { ...item.data, isExported: true, status: 'pending' }; 
+       addToHistory(finalData);
+    });
+
+    toast.success(`Progress saved! ${batchData.length} testimonials added to history.`, {
+       description: "Viewing history..."
+    });
+    
+    navigate('/history');
   };
 
   const handleSaveAll = () => {
@@ -270,19 +393,34 @@ export const BatchProcess: React.FC = () => {
     { name: 'Century Gothic', value: '"Century Gothic", sans-serif' },
   ];
 
-  const TemplateComponent = templateMap[globalTemplate];
-
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-12">
       <div className="flex items-center justify-between mb-8">
          <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight uppercase">Batch Process Screenshots</h1>
-         {step === 1 && !isProcessing && (
-            <button
-               onClick={() => { setStep(0); setBatchData([]); setQueuedFiles([]); }}
-               className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground bg-card border border-border px-4 py-2 rounded-md transition-colors shadow-sm"
-            >
-               <ArrowLeft className="w-4 h-4" /> Start Over
-            </button>
+         
+         {step === 1 && !isProcessing && batchData.length > 0 && (
+            <div className="flex items-center gap-3">
+               <button
+                  onClick={() => {
+                     const allSelected = selectedIds.size === batchData.length;
+                     if (allSelected) setSelectedIds(new Set());
+                     else setSelectedIds(new Set(batchData.map(b => b.id)));
+                  }}
+                  className="group flex items-center gap-3 text-[11px] font-black uppercase tracking-widest bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-5 py-3 rounded-xl transition-all border border-slate-200 dark:border-white/10 shadow-sm hover:shadow-md"
+               >
+                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${selectedIds.size === batchData.length ? 'bg-white border-slate-900 text-slate-900' : 'bg-slate-50 border-slate-200 text-transparent'}`}>
+                     <Check className="w-3.5 h-3.5 stroke-[4px]" />
+                  </div>
+                  {selectedIds.size === batchData.length ? 'Deselect All' : 'Select All'}
+               </button>
+
+               <button
+                  onClick={() => { setStep(0); setBatchData([]); setQueuedFiles([]); }}
+                  className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-muted-foreground hover:text-foreground bg-card border border-border px-4 py-2.5 rounded-lg transition-colors shadow-sm"
+               >
+                  <ArrowLeft className="w-4 h-4" /> Start Over
+               </button>
+            </div>
          )}
       </div>
 
@@ -290,7 +428,7 @@ export const BatchProcess: React.FC = () => {
         <div className="max-w-4xl mx-auto mt-6 bg-card p-8 rounded-xl border border-border shadow-sm transition-all">
           <div className="text-center mb-10">
             <h2 className="text-3xl font-bold text-foreground mb-2">
-              Transform <span className="text-blue-600">hundreds</span> of reviews
+              Transform <span className="text-blue-600">multiple</span> reviews
             </h2>
             <p className="text-muted-foreground">Pick multiple screenshots and proceed to extraction when ready.</p>
           </div>
@@ -346,17 +484,22 @@ export const BatchProcess: React.FC = () => {
                         isProcessing ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.01] active:scale-95'
                       }`}
                    >
-                      {isProcessing ? (
-                        <>
-                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-5 h-5" />
-                          Extract {queuedFiles.length} Images with AI
-                        </>
-                      )}
+                       {isProcessing ? (
+                         <>
+                           <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                           Processing...
+                         </>
+                       ) : queuedFiles.length < 2 ? (
+                         <>
+                           <X className="w-5 h-5" />
+                           Upload {2 - queuedFiles.length} more for Batch
+                         </>
+                       ) : (
+                         <>
+                           <Sparkles className="w-5 h-5" />
+                           Extract {queuedFiles.length} Images with AI
+                         </>
+                       )}
                    </button>
                 </div>
              </div>
@@ -373,166 +516,341 @@ export const BatchProcess: React.FC = () => {
           )}
         </div>
       ) : isProcessing ? (
-        <div className="max-w-2xl mx-auto mt-20 text-center space-y-6">
-           <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-           <h3 className="text-2xl font-bold text-foreground">Batch Magic in Progress...</h3>
-           <p className="text-muted-foreground animate-pulse text-lg">{progressMsg}</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-8 items-start">
-           <div className="lg:sticky lg:top-6 space-y-6 bg-card p-6 rounded-xl border border-border shadow-sm">
-              <h3 className="font-bold text-foreground text-lg border-b border-border pb-4">Global Styling</h3>
-              <div className="space-y-6">
-                 <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Template</label>
-                    <select 
-                      value={globalTemplate} 
-                      onChange={(e) => setGlobalTemplate(e.target.value as TemplateName)}
-                      className="w-full px-3 py-2.5 rounded-md bg-accent border border-border text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none font-medium"
-                    >
-                      <option value="minimal">Minimal</option>
-                      <option value="instagram">Instagram</option>
-                      <option value="whatsapp">WhatsApp</option>
-                      <option value="dark-premium">Dark Premium</option>
-                      <option value="linkedin">LinkedIn</option>
-                      <option value="glassmorphism">Glassmorphism</option>
-                      <option value="geometric">Geometric</option>
-                      <option value="happy-bubble">Happy Bubble</option>
-                      <option value="deep-burgundy">Deep Burgundy</option>
-                      <option value="classic-parchment">Classic Parchment</option>
-                      <option value="corporate-grid">Corporate Grid</option>
-                      <option value="azure-bubble">Azure Bubble</option>
-                    </select>
-                 </div>
+        <div className="max-w-5xl mx-auto mt-10">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-                 <div className="space-y-3">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Fonts</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {fontFamilies.map(font => (
-                         <button
-                           key={font.value}
-                           onClick={() => updateAllData({ fontFamily: font.value })}
-                           className={`text-xs px-3 py-2.5 rounded-md transition-all border ${
-                              customization.fontFamily === font.value ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-md' : 'bg-accent text-foreground border-border hover:border-blue-300'
-                           }`}
-                           style={{ fontFamily: font.value }}
-                         >
-                           {font.name}
-                         </button>
-                      ))}
-                    </div>
-                 </div>
-
-                 <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                       <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Bg Color</label>
-                       <div className="flex gap-2 items-center bg-accent p-2 rounded-md border border-border">
-                          <input 
-                             type="color" 
-                             value={customization.customBackgroundColor || '#FFFFFF'} 
-                             onChange={(e) => updateAllData({ customBackgroundColor: e.target.value })}
-                             className="w-8 h-8 rounded cursor-pointer border-0"
-                          />
-                          <span className="text-[10px] font-mono text-muted-foreground uppercase">{customization.customBackgroundColor || '#FFF'}</span>
-                       </div>
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Text Color</label>
-                       <div className="flex gap-2 items-center bg-accent p-2 rounded-md border border-border">
-                          <input 
-                             type="color" 
-                             value={customization.customTextColor || '#000000'} 
-                             onChange={(e) => updateAllData({ customTextColor: e.target.value })}
-                             className="w-8 h-8 rounded cursor-pointer border-0"
-                          />
-                          <span className="text-[10px] font-mono text-muted-foreground uppercase">{customization.customTextColor || '#000'}</span>
-                       </div>
-                    </div>
-                 </div>
+            {/* LEFT: File progress list */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-white/10 shadow-sm p-6">
+              <div className="flex items-center justify-between mb-1">
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Processing {queuedFiles.length} files</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Running AI extraction...</p>
+                </div>
+                <span className="text-xs font-bold text-blue-600 bg-blue-50 dark:bg-blue-500/10 px-3 py-1.5 rounded-full flex items-center gap-1.5">
+                  <span className="w-3 h-3 border-2 border-blue-400 border-t-blue-600 rounded-full animate-spin inline-block" />
+                  AI Engine
+                </span>
               </div>
 
-              <div className="pt-6 border-t border-border space-y-3">
-                 <p className="text-sm font-medium text-muted-foreground mb-1">Ready to export {batchData.length} cards.</p>
-                 <button 
-                    onClick={handleExportAll}
-                    className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold py-3.5 rounded-md transition-all flex justify-center items-center gap-2 shadow-xl shadow-black/5 dark:shadow-white/5 hover:scale-[1.01]"
-                 >
-                    <Download className="w-5 h-5"/> Export All as ZIP 
-                 </button>
-                 <button 
-                    onClick={handleSaveAll}
-                    className="w-full bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-bold py-3.5 rounded-md transition-all flex justify-center items-center gap-2 shadow-sm hover:bg-slate-200 dark:hover:bg-slate-700"
-                 >
-                    <Sparkles className="w-5 h-5"/> Save All to Wall of Love 
-                 </button>
+              {/* Overall progress */}
+              <div className="mt-5 mb-5">
+                <div className="flex justify-between text-xs font-semibold text-slate-500 mb-1.5">
+                  <span>Overall progress</span>
+                  <span className="text-blue-600">{Math.round(((currentFileIndex + (currentFileProgress / 100)) / queuedFiles.length) * 100)}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.round(((currentFileIndex + (currentFileProgress / 100)) / queuedFiles.length) * 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Per-file list */}
+              <div className="space-y-4">
+                {queuedFiles.map((file, idx) => {
+                   const isDone = batchData.some(r => (r as any).fileName === file.name);
+                   const isProcessingFile = idx === currentFileIndex && !isDone;
+                   const isFailed = idx < currentFileIndex && !isDone;
+                   const pct = isProcessingFile ? currentFileProgress : isDone ? 100 : 0;
+
+                  return (
+                    <div key={idx} className="space-y-1.5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/10 flex items-center justify-center text-slate-400">
+                          <ImageIcon className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate">{file.name}</span>
+                            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider">
+                              <span className="text-slate-400">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
+                              {isDone ? (
+                                <span className="text-emerald-500">Extracted</span>
+                              ) : isFailed ? (
+                                <span className="text-red-500">Failed</span>
+                              ) : isProcessingFile ? (
+                                <span className="text-blue-500">{pct}%</span>
+                              ) : (
+                                <span className="text-slate-400">Queued</span>
+                              )}
+                              
+                              {isDone && <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center border border-emerald-100 shadow-sm"><Check className="w-3.5 h-3.5 stroke-[4px]" /></div>}
+                              {isFailed && <div className="w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center border border-red-100 shadow-sm"><AlertCircle className="w-3.5 h-3.5 stroke-[4px]" /></div>}
+                              {isProcessingFile && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
+                              {!isDone && !isFailed && !isProcessingFile && <div className="w-6 h-6 rounded-full border-2 border-slate-200" />}
+                            </div>
+                          </div>
+                          
+                          <div className="mt-1.5 h-1 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                             <div 
+                                className={`h-full transition-all duration-300 ${isDone ? 'bg-emerald-500' : isFailed ? 'bg-red-400' : 'bg-blue-500'}`}
+                                style={{ width: `${pct}%` }}
+                             />
+                          </div>
+                          {isProcessingFile && <p className="text-[10px] text-slate-400 mt-1 animate-pulse">AI Processing...</p>}
+                          {isFailed && <p className="text-[10px] text-red-400 mt-1">AI was busy. Skipping this image...</p>}
+                          {isDone && <p className="text-[10px] text-emerald-500/70 mt-1">✓ AI complete · Extraction ready</p>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RIGHT: OCR info panel */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-white/10 shadow-sm p-8 flex flex-col items-center justify-center text-center gap-6">
+              <div className="w-20 h-20 rounded-2xl bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center relative overflow-hidden group">
+                <div className="absolute inset-0 bg-blue-600/5 animate-pulse" />
+                <Sparkles className="w-10 h-10 text-blue-600 animate-bounce transition-transform duration-1000" />
+              </div>
+              
+              <div>
+                <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2 uppercase tracking-tight">Extracting Knowledge</h3>
+                <p className="text-sm text-slate-500 leading-relaxed max-w-xs mx-auto font-medium">
+                  Our advanced AI model is decoding the visual hierarchy and extracting pure customer sentiment.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap justify-center gap-2 max-w-sm">
+                {['Neural Analysis', 'Intent Detection', 'Semantic Parsing', 'Context Awareness'].map(tag => (
+                  <span key={tag} className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-3 py-1.5 rounded-md border border-slate-200 dark:border-white/5">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+
+              {/* Animated progress indicator */}
+              <div className="flex items-center gap-3 py-4">
+                <div className="flex gap-1.5">
+                  {[0, 1, 2].map(i => (
+                    <div 
+                      key={i}
+                      className="w-1.5 h-1.5 rounded-full bg-blue-600"
+                      style={{ 
+                        animation: 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        animationDelay: `${i * 0.2}s`
+                      }}
+                    />
+                  ))}
+                </div>
+                <span className="text-[11px] font-bold text-blue-600 uppercase tracking-widest animate-pulse">Analyzing...</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 items-start max-w-[1400px] mx-auto">
+           {/* SIDEBAR: Global Styling */}
+           <div className="lg:sticky lg:top-6 space-y-6">
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-white/10 shadow-sm space-y-8">
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">Global Styling</h3>
+
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Template</label>
+                  <div className="relative">
+                    <button
+                      onClick={() => setIsTemplateOpen(!isTemplateOpen)}
+                      className="w-full pl-12 pr-4 py-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-left font-black text-[13px] tracking-tight text-slate-900 dark:text-white cursor-pointer hover:border-blue-300 transition-all flex items-center justify-between"
+                    >
+                      <span>{templateOptions.find(t => t.id === globalTemplate)?.label}</span>
+                      <div className={`transition-transform duration-200 ${isTemplateOpen ? 'rotate-180' : ''}`}>
+                         <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+                      </div>
+                    </button>
+
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border border-slate-100 shadow-sm pointer-events-none" 
+                         style={{ backgroundColor: templateOptions.find(t => t.id === globalTemplate)?.colorHex }} 
+                    />
+
+                    {isTemplateOpen && (
+                      <div className="absolute z-[100] mt-2 w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="max-h-[300px] overflow-y-auto p-1.5 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+                          {templateOptions.map(tpl => (
+                            <button
+                              key={tpl.id}
+                              onClick={() => {
+                                updateGlobalStyle({ template: tpl.id as TemplateName });
+                                setIsTemplateOpen(false);
+                              }}
+                              className={`flex items-center gap-3 w-full p-3 rounded-xl transition-all text-left group ${
+                                globalTemplate === tpl.id 
+                                  ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600' 
+                                  : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                              }`}
+                            >
+                              <div className={`w-4 h-4 rounded-full border border-slate-100 shadow-sm ${tpl.colorHex ? '' : tpl.color}`} style={{ backgroundColor: tpl.colorHex }} />
+                              <span className="text-[13px] font-bold">{tpl.label}</span>
+                              {globalTemplate === tpl.id && <Check className="w-3.5 h-3.5 ml-auto stroke-[3px]" />}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Fonts</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {fontFamilies.map(font => (
+                       <button
+                         key={font.value}
+                         onClick={() => updateGlobalStyle({ fontFamily: font.value })}
+                         className={`text-[11px] px-3 py-2.5 rounded-lg transition-all border ${
+                            batchData.every(b => !selectedIds.has(b.id) || b.data.fontFamily === font.value) && batchData.some(b => selectedIds.has(b.id) && b.data.fontFamily === font.value) ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-lg shadow-blue-500/20' : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-white/5 hover:border-blue-400'
+                         }`}
+                         style={{ fontFamily: font.value }}
+                       >
+                         {font.name}
+                       </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-slate-100 dark:border-white/5 space-y-4">
+                   <button 
+                      onClick={handleExportAll}
+                      className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold py-4 rounded-xl transition-all flex justify-center items-center gap-2 shadow-xl hover:scale-[1.02] active:scale-[0.98]"
+                   >
+                      <Download className="w-5 h-5"/> Export All (ZIP)
+                   </button>
+                   <button 
+                      onClick={() => handleExitWithAutoSave()}
+                      className="w-full bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold py-4 rounded-xl transition-all flex justify-center items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-700"
+                   >
+                      <LogOut className="w-5 h-5"/> Exit Editor
+                   </button>
+                </div>
               </div>
            </div>
 
+           {/* MAIN LIST: Vertical Editors */}
            <div className="space-y-8">
-              {batchData.map((item, index) => (
-                 <div key={item.id} className="bg-card p-6 rounded-xl border border-border shadow-sm flex flex-col xl:flex-row gap-6 hover:shadow-md transition-shadow">
-                    <div className="xl:w-64 flex-shrink-0 space-y-4">
+               {batchData.map((item, index) => (
+                  <div key={item.id} className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-white/10 shadow-sm flex flex-col xl:flex-row gap-6 items-start hover:shadow-md transition-shadow">
+                     <div className="xl:w-[380px] flex-shrink-0 space-y-6">
                        <div className="flex items-center gap-2">
-                          <span className="w-6 h-6 rounded-md bg-blue-600 text-white flex items-center justify-center text-[10px] font-bold">#{index + 1}</span>
-                          <span className="text-sm font-bold text-foreground uppercase tracking-wider">Editor</span>
+                          <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-black">#{index + 1}</div>
+                          <h3 className="text-sm font-black uppercase tracking-widest text-slate-900 dark:text-white">Editor</h3>
                        </div>
-                       <input 
-                          type="text" 
-                          value={item.data.name} 
-                          onChange={(e) => handleDataEdit(item.id, { name: e.target.value })}
-                          className="w-full text-sm px-3 py-2.5 rounded-md bg-accent border border-border focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          placeholder="Name *"
-                       />
-                       <input 
-                          type="text" 
-                          value={item.data.role} 
-                          onChange={(e) => handleDataEdit(item.id, { role: e.target.value })}
-                          className="w-full text-sm px-3 py-2.5 rounded-md bg-accent border border-border focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          placeholder="Role *"
-                       />
-                       <textarea 
-                          value={item.data.feedback} 
-                          onChange={(e) => handleDataEdit(item.id, { feedback: e.target.value })}
-                          rows={4}
-                          className="w-full text-sm px-3 py-2.5 rounded-md bg-accent border border-border focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-40"
-                          placeholder="Feedback *"
-                       />
-                       
-                       <div className="pt-2 grid grid-cols-2 gap-2">
-                          <button 
-                            onClick={() => handleIndividualExport(item.id, 'png')}
-                            className="flex items-center justify-center gap-1.5 py-2 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all"
-                          >
-                            <Download className="w-3 h-3" /> PNG
+
+                       <div className="space-y-4">
+                          <input 
+                             type="text" 
+                             value={item.data.name} 
+                             onChange={(e) => handleDataEdit(item.id, { name: e.target.value })}
+                             className="w-full text-base px-4 py-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-white/5 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                             placeholder="Name *"
+                          />
+                          <input 
+                             type="text" 
+                             value={item.data.role} 
+                             onChange={(e) => handleDataEdit(item.id, { role: e.target.value })}
+                             className="w-full text-base px-4 py-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-white/5 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                             placeholder="Role *"
+                          />
+                          <textarea 
+                             value={item.data.feedback} 
+                             onChange={(e) => handleDataEdit(item.id, { feedback: e.target.value })}
+                             rows={5}
+                             className="w-full text-base px-4 py-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-white/5 focus:ring-2 focus:ring-blue-500 outline-none resize-none leading-relaxed"
+                             placeholder="Feedback content..."
+                          />
+                       </div>
+
+                        {/* RATING STARS CUSTOMIZATION */}
+                        <div className="pt-2">
+                           <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2 block">Rating</label>
+                           <div className="flex items-center gap-1.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-white/5">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                 <button
+                                    key={star}
+                                    onClick={() => handleDataEdit(item.id, { rating: star })}
+                                    className="transition-transform active:scale-90 hover:scale-110"
+                                 >
+                                    <Star 
+                                       className={`w-6 h-6 ${
+                                          star <= (item.data.rating || 5)
+                                             ? 'fill-amber-400 text-amber-400' 
+                                             : 'text-slate-200 dark:text-slate-700'
+                                       }`} 
+                                    />
+                                 </button>
+                              ))}
+                           </div>
+                        </div>
+
+                       <div className="grid grid-cols-2 gap-3 pt-4">
+                          <button onClick={() => handleIndividualExport(item.id, 'png')} className="flex items-center justify-center gap-2 py-3 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-black uppercase hover:bg-slate-100 transition-all border border-slate-100 dark:border-white/5">
+                             <Download className="w-3.5 h-3.5" /> PNG
+                          </button>
+                          <button onClick={() => handleIndividualExport(item.id, 'pdf')} className="flex items-center justify-center gap-2 py-3 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-black uppercase hover:bg-slate-100 transition-all border border-slate-100 dark:border-white/5">
+                             <FileText className="w-3.5 h-3.5" /> PDF
+                          </button>
+                          <button onClick={() => handleIndividualExport(item.id, 'html')} className="flex items-center justify-center gap-2 py-3 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-black uppercase hover:bg-slate-100 transition-all border border-slate-100 dark:border-white/5">
+                             <Code className="w-3.5 h-3.5" /> HTML
                           </button>
                           <button 
-                            onClick={() => handleIndividualExport(item.id, 'pdf')}
-                            className="flex items-center justify-center gap-1.5 py-2 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all"
+                             onClick={() => {
+                                addToHistory(item.data);
+                                toast.success("Saved to Wall of Love!");
+                             }} 
+                             className="flex items-center justify-center gap-2 py-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-xs font-black uppercase hover:bg-blue-100 transition-all border border-blue-100 dark:border-blue-900/30"
                           >
-                            <FileText className="w-3 h-3" /> PDF
-                          </button>
-                          <button 
-                            onClick={() => handleIndividualExport(item.id, 'html')}
-                            className="flex items-center justify-center gap-1.5 py-2 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all"
-                          >
-                            <Code className="w-3 h-3" /> HTML
-                          </button>
-                          <button 
-                            onClick={() => {
-                              addToHistory(getMergedData(item.data));
-                              toast.success("Saved to Wall of Love!");
-                            }}
-                            className="flex items-center justify-center gap-1.5 py-2 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs font-bold transition-all"
-                          >
-                            <Sparkles className="w-3 h-3" /> Save
+                             <Sparkles className="w-3.5 h-3.5" /> Save
                           </button>
                        </div>
                     </div>
-                    <div className="flex-1 bg-muted/50 p-8 rounded-xl border border-border flex items-center justify-center overflow-hidden min-h-[400px]">
-                       <div className="w-full max-w-[480px]" ref={(el) => (cardRefs.current[item.id] = el)}>
-                          <TemplateComponent data={getMergedData(item.data)} showWatermark={true} />
-                       </div>
-                    </div>
+                    <div className="flex-1 bg-slate-50/50 dark:bg-slate-800/30 rounded-2xl border border-slate-100 dark:border-white/5 p-4 flex flex-col items-center justify-center min-h-[450px] relative group/preview">
+                        {/* TICK BOX ON LIVE PREVIEW (MOVED AS REQUESTED) */}
+                        <button 
+                           onClick={() => {
+                              const next = new Set(selectedIds);
+                              if (next.has(item.id)) next.delete(item.id);
+                              else next.add(item.id);
+                              setSelectedIds(next);
+                           }}
+                           className={`absolute top-6 right-6 w-8 h-8 rounded-lg border-2 flex items-center justify-center transition-all z-20 shadow-sm hover:shadow-md ${
+                              selectedIds.has(item.id) 
+                                 ? 'bg-blue-600 border-blue-600 text-white' 
+                                 : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-white/10 text-transparent'
+                           }`}
+                        >
+                           <Check className="w-5 h-5 stroke-[4px]" />
+                        </button>
+                        <div className="w-full max-w-[420px]" ref={(el) => (cardRefs.current[item.id] = el)}>
+                           {(() => {
+                              const templateId = item.data.template || globalTemplate;
+                              const TemplateComp = templateMap[templateId as keyof typeof templateMap] || templateMap.minimal;
+                              return <TemplateComp data={item.data} />;
+                           })()}
+                        </div>
+
+                        {/* AI TONE SWITCHER (MOVED TO BOTTOM AS REQUESTED) */}
+                        <div className="mt-8 flex items-center gap-2 p-1 bg-white dark:bg-slate-900 rounded-full border border-slate-100 dark:border-white/10 shadow-sm z-20">
+                           {['Original', 'Professional', 'Concise', 'Expanded'].map(tone => (
+                              <button
+                                 key={tone}
+                                 onClick={() => handleToneSwitch(item.id, tone.toLowerCase())}
+                                 className={`px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${
+                                    (item.data.tone as string)?.toLowerCase() === tone.toLowerCase()
+                                       ? 'bg-blue-600 text-white shadow-md'
+                                       : 'text-slate-400 hover:text-slate-600'
+                                 }`}
+                              >
+                                 {tone}
+                              </button>
+                           ))}
+                           <div className="w-px h-4 bg-slate-100 dark:bg-white/5 mx-1" />
+                           <button className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-600 text-[11px] font-black uppercase tracking-wider hover:bg-blue-100 transition-all">
+                              <Sparkles className="w-3 h-3" />
+                              Enhance
+                           </button>
+                        </div>
+                     </div>
                  </div>
               ))}
            </div>

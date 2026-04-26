@@ -39,3 +39,13 @@ export async function chatWithAI(message: string) {
     throw new Error(error.response?.data?.error || "Failed to connect to AI");
   }
 }
+
+export async function enhanceTestimonial(feedback: string, tone: string) {
+  try {
+    const response = await axios.post(`${API_URL}/ai/enhance`, { feedback, tone });
+    return response.data.feedback;
+  } catch (error: any) {
+    console.error("AI Enhance Error:", error);
+    throw new Error(error.response?.data?.error || "Failed to enhance testimonial");
+  }
+}

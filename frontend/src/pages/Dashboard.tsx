@@ -15,6 +15,56 @@ import {
 } from 'recharts';
 import api from "../lib/axios";
 
+// Spotlight stat card — cursor-following radial light + glowing border on hover
+const SpotlightCard: React.FC<{
+  children: React.ReactNode;
+  spotlightColor: string;
+  borderGlow: string;
+  onClick: () => void;
+}> = ({ children, spotlightColor, borderGlow, onClick }) => {
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const overlayRef = React.useRef<HTMLDivElement>(null);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!cardRef.current || !overlayRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    overlayRef.current.style.background = `radial-gradient(220px circle at ${x}px ${y}px, ${spotlightColor}, transparent 70%)`;
+    overlayRef.current.style.opacity = '1';
+    // Thin shining border via box-shadow
+    cardRef.current.style.boxShadow = `0 0 0 1px ${borderGlow}55, 0 0 12px 1px ${borderGlow}40`;
+    cardRef.current.style.borderColor = `${borderGlow}80`;
+  };
+
+  const handleMouseLeave = () => {
+    if (overlayRef.current) overlayRef.current.style.opacity = '0';
+    if (cardRef.current) {
+      cardRef.current.style.boxShadow = '';
+      cardRef.current.style.borderColor = '';
+    }
+  };
+
+  return (
+    <div
+      ref={cardRef}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      onClick={onClick}
+      className="relative bg-white dark:bg-slate-900 p-5 rounded-lg border border-slate-100 dark:border-white/10 shadow-sm overflow-hidden cursor-pointer transition-all duration-300"
+    >
+      {/* Spotlight overlay */}
+      <div
+        ref={overlayRef}
+        className="pointer-events-none absolute inset-0 rounded-lg transition-opacity duration-200"
+        style={{ opacity: 0 }}
+      />
+      {/* Card content */}
+      <div className="relative z-10">{children}</div>
+    </div>
+  );
+};
+
 const Dashboard: React.FC = () => {
   const { history, loadHistory } = useTestimonialStore();
   const { user } = useAuthStore();
@@ -440,13 +490,15 @@ const Dashboard: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {[
-            { id: 'total', label: "Total Created", value: (history?.length || 0).toString(), status: "Testimonials", color: "text-blue-500", icon: <Inbox className="w-5 h-5" /> },
-            { id: 'pending', label: "Pending Review", value: (history || []).filter(i => !i.isExported).length.toString(), status: "Action Needed", color: "text-rose-500", icon: <Clock className="w-5 h-5" />, path: '/history' },
-            { id: 'exported', label: "Exported Assets", value: (history || []).filter(i => i.isExported).length.toString(), status: "Completed", color: "text-emerald-500", icon: <CheckCircle2 className="w-5 h-5" />, path: '/settings', state: { activeTab: 'Download History' } },
-            { id: 'schedules', label: "Active Schedules", value: Object.keys(notes).filter(k => notes[k] && !completedNotes[k]).length.toString(), status: "Upcoming", color: "text-amber-500", icon: <CalendarIcon className="w-5 h-5" />, scrollId: 'calendar-section' },
+            { id: 'total', label: "Total Created", value: (history?.length || 0).toString(), status: "Testimonials", color: "text-blue-500", spotlightColor: 'rgba(59,130,246,0.15)', borderGlow: '#3b82f6', icon: <Inbox className="w-5 h-5" /> },
+            { id: 'pending', label: "Pending Review", value: (history || []).filter(i => !i.isExported).length.toString(), status: "Action Needed", color: "text-rose-500", spotlightColor: 'rgba(244,63,94,0.15)', borderGlow: '#f43f5e', icon: <Clock className="w-5 h-5" />, path: '/history' },
+            { id: 'exported', label: "Exported Assets", value: (history || []).filter(i => i.isExported).length.toString(), status: "Completed", color: "text-emerald-500", spotlightColor: 'rgba(16,185,129,0.15)', borderGlow: '#10b981', icon: <CheckCircle2 className="w-5 h-5" />, path: '/settings', state: { activeTab: 'Download History' } },
+            { id: 'schedules', label: "Active Schedules", value: Object.keys(notes).filter(k => notes[k] && !completedNotes[k]).length.toString(), status: "Upcoming", color: "text-amber-500", spotlightColor: 'rgba(245,158,11,0.15)', borderGlow: '#f59e0b', icon: <CalendarIcon className="w-5 h-5" />, scrollId: 'calendar-section' },
           ].map((stat, i) => (
-            <div 
-              key={i} 
+            <SpotlightCard
+              key={i}
+              spotlightColor={stat.spotlightColor}
+              borderGlow={stat.borderGlow}
               onClick={() => {
                 if (stat.id === 'total') {
                   setShowTotalCreatedModal(true);
@@ -456,24 +508,21 @@ const Dashboard: React.FC = () => {
                   navigate(stat.path, { state: stat.state });
                 }
               }}
-              className="bg-white dark:bg-slate-900 p-5 rounded-lg border border-slate-100 dark:border-white/10 shadow-sm relative overflow-hidden group hover:shadow-md transition-all cursor-pointer"
             >
               <div className="flex items-center gap-3 mb-2">
-                 <div className={`p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 ${stat.color}`}>
-                   {stat.icon}
-                 </div>
-                 <p className="text-sm font-bold text-slate-500 dark:text-slate-400">{stat.label}</p>
+                <div className={`p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 ${stat.color}`}>
+                  {stat.icon}
+                </div>
+                <p className="text-sm font-bold text-slate-500 dark:text-slate-400">{stat.label}</p>
               </div>
-              
               <p className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{stat.value}</p>
-              
               <div className="mt-4 flex justify-end">
-                 <span className={`text-[9px] font-black uppercase tracking-[0.1em] px-2 py-0.5 rounded-md ${stat.color.replace('text-', 'bg-').replace('500', '50/10')} ${stat.color}`}>
-                   {stat.status}
-                 </span>
+                <span className={`text-[9px] font-black uppercase tracking-[0.1em] px-2 py-0.5 rounded-md ${stat.color.replace('text-', 'bg-').replace('500', '50/10')} ${stat.color}`}>
+                  {stat.status}
+                </span>
               </div>
-           </div>
-         ))}
+            </SpotlightCard>
+          ))}
       </div>
 
       {/* Middle Row: Analytics Graphs */}

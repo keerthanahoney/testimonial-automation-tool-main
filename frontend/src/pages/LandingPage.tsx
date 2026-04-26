@@ -540,8 +540,8 @@ const LandingPage: React.FC = () => {
             { icon: Brain, title: "AI text extraction", desc: "Upload a screenshot. Our model parses sender, message, and timestamp with 99% accuracy.", glow: "from-purple-500", text: "text-purple-500 dark:text-purple-400" },
             { icon: Palette, title: "20+ templates", desc: "From minimalist editorial to neon brutalism. Templates designed by working designers, not AI.", glow: "from-blue-500", text: "text-blue-500 dark:text-blue-400" },
             { icon: Wand2, title: "Brand-aware styling", desc: "Drop your logo and brand colors once. Every testimonial inherits your visual language.", glow: "from-rose-500", text: "text-rose-500 dark:text-rose-400" },
-            { icon: Layers, title: "Bulk generate", desc: "Convert 100 testimonials at once. Auto-rotate through templates for a varied feed.", glow: "from-purple-500", text: "text-purple-500 dark:text-purple-400" },
-            { icon: Share2, title: "Export anywhere", desc: "PNG, SVG, embed code, or one-click share to LinkedIn, X, and your testimonial wall.", glow: "from-blue-500", text: "text-blue-500 dark:text-blue-400" },
+            { icon: Layers, title: "Bulk generate", desc: "Convert 50 testimonials at once. Auto-rotate through templates for a varied feed.", glow: "from-purple-500", text: "text-purple-500 dark:text-purple-400" },
+            { icon: Share2, title: "Export anywhere", desc: "PNG, JPG, HTML, PDF, or one-click share to LinkedIn, Instagram, and your testimonial wall.", glow: "from-blue-500", text: "text-blue-500 dark:text-blue-400" },
             { icon: Zap, title: "Live in seconds", desc: "Hosted testimonial walls with your subdomain. Drop them on your site with a single line.", glow: "from-rose-500", text: "text-rose-500 dark:text-rose-400" },
           ].map((feature, idx) => (
             <div key={idx} className="bg-card dark:bg-[#0b1219] p-6 sm:p-8 rounded-2xl border border-black/5 dark:border-white/5 shadow-xl shadow-black/5 dark:shadow-none text-left flex flex-col gap-5 hover:-translate-y-1 hover:border-black/10 dark:hover:border-white/10 transition-all duration-300 group overflow-hidden relative z-0">
@@ -616,7 +616,7 @@ const LandingPage: React.FC = () => {
               <ul className="space-y-4 text-sm font-semibold text-slate-600 dark:text-slate-500">
                 <li className="hover:text-black dark:hover:text-white cursor-pointer transition-colors">Features</li>
                 <li className="hover:text-black dark:hover:text-white cursor-pointer transition-colors">Templates</li>
-                <li className="hover:text-black dark:hover:text-white cursor-pointer transition-colors">API</li>
+                <li className="hover:text-black dark:hover:text-white cursor-pointer transition-colors">Integrations</li>
               </ul>
             </div>
             <div>
